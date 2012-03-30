@@ -155,14 +155,13 @@ public:
   uint8_t row_;
   uint8_t column_;
   uint8_t number_;
-  uint8_t oldRow_;
-  uint8_t oldColumn_;
 public:
   Piece(uint8_t row, uint8_t colonne, uint8_t number);
-  void display();
+  void display(uint8_t oldRow, uint8_t oldColumn);
   boolean moveUp();
   boolean moveDown();
   boolean moveRight();
+  void freeze();
   static Piece newPiece();
 };
 
@@ -183,15 +182,24 @@ Piece::newPiece()
 }
 
 void
-Piece::display()
+Piece::display(uint8_t oldRow, uint8_t oldColumn)
 {
-  if (oldRow_ == row_ && oldColumn_ == column_) return;
+  if (oldRow == row_ && oldColumn == column_) return;
 
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j < 3; ++j) {
-      if (allPieces[number_].pixel(i, j)) {
-        lcd.setCursor(oldColumn_+j, (oldRow_+i) / 2 - 1);
-        lcd.print(' ');
+  for (int j = 0; j < 3; ++j) {
+    for (int i = -1; i < 3; ++i) {
+      if ((oldRow + i) % 2 == 0) {
+          lcd.setCursor(oldColumn+j, (oldRow+i) / 2 - 1);
+          if (board[oldRow + i][oldColumn + j] && board[oldRow + i + 1][oldColumn + j]) {
+            lcd.write(2);
+          } else if (board[oldRow + i][oldColumn + j]) {
+            lcd.write(0);
+          } else if (board[oldRow + i + 1][oldColumn + j]) {
+            lcd.write(1);
+          } else {
+            lcd.print(' ');
+          }
+          ++i;
       }
     }
   }
@@ -200,9 +208,14 @@ Piece::display()
       if (allPieces[number_].pixel(i, j)) {
         lcd.setCursor(column_+j, (row_+i) / 2 - 1);
         if ((row_ + i) % 2) {
-          lcd.write(1);
+          if (board[row_ + i - 1][column_ + j])
+            lcd.write(2);
+          else
+            lcd.write(1);
         } else {
           if (i < 2 && allPieces[number_].pixel(i+1, j)) {
+            lcd.write(2);
+          } else if (board[row_ + i + 1][column_ + j]) {
             lcd.write(2);
           } else {
             lcd.write(0);
@@ -217,8 +230,6 @@ Piece::display()
 boolean
 Piece::moveUp()
 {
-  oldRow_   = row_;
-  oldColumn_ = column_;
   --row_;
   if ((allPieces[number_].top_[0] != 3 && board[row_ + allPieces[number_].top_[0]][column_]) ||
       (allPieces[number_].top_[1] != 3 && board[row_ + allPieces[number_].top_[1]][column_]) ||
@@ -226,14 +237,13 @@ Piece::moveUp()
     ++row_;
     return false;
   }
+  display(row_ + 1, column_);
   return true;
 }
 
 boolean
 Piece::moveDown()
 {
-  oldRow_   = row_;
-  oldColumn_ = column_;
   ++row_;
   if ((allPieces[number_].bottom_[0] != 3 && board[row_ + allPieces[number_].bottom_[0]][column_]) ||
       (allPieces[number_].bottom_[1] != 3 && board[row_ + allPieces[number_].bottom_[1]][column_]) ||
@@ -241,26 +251,52 @@ Piece::moveDown()
     --row_;
     return false;
   }
+  display(row_ - 1, column_);
   return true;
 }
 
 boolean
 Piece::moveRight()
 {
-  oldRow_   = row_;
-  oldColumn_ = column_;
   ++column_;
-  if ((allPieces[number_].right_[0] != 3 && board[row_][column_ + allPieces[number_].right_[0]]) ||
-      (allPieces[number_].right_[1] != 3 && board[row_][column_ + allPieces[number_].right_[1]]) ||
-      (allPieces[number_].right_[2] != 3 && board[row_][column_ + allPieces[number_].right_[2]])) {
+  if ((allPieces[number_].right_[0] != 3 && board[row_  ][column_ + allPieces[number_].right_[0]]) ||
+      (allPieces[number_].right_[1] != 3 && board[row_+1][column_ + allPieces[number_].right_[1]]) ||
+      (allPieces[number_].right_[2] != 3 && board[row_+2][column_ + allPieces[number_].right_[2]])) {
     --column_;
     return false;
   }
+  display(row_, column_ - 1);
   return true;
+}
+
+void
+Piece::freeze()
+{
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      if (allPieces[number_].pixel(i, j)) {
+        board[row_ + i][column_ + j] = true;
+      }
+    }
+  }
+  for (int j = 0; j < 3; ++j) {
+    boolean complet = true;
+    for (int i = 2; i < 6; ++i) {
+      if (!board[i][column_ + j]) {
+        complet = false;
+        break;
+      }
+    }
+    if (complet) {
+    }
+  }
 }
 
 /* Current piece */
 Piece currentPiece = Piece::newPiece();
+
+int levelUp = 10000;
+int counter = 0;
 
 int key=-1;
 int oldkey=-1;
@@ -283,6 +319,8 @@ void setup()
   delay(300);
   lcd.clear();
 
+  currentPiece.display(0, 0);
+
   for (int j = 0; j < 17; ++j) {
     board[0][j] = true;
     board[1][j] = true;
@@ -295,6 +333,7 @@ void setup()
 }
 
 void loop() {
+  ++counter;
   key = lcd.get_key();  // read the value from the sensor & convert into key press
 
   if (key != oldkey)    // if keypress is detected
@@ -313,8 +352,13 @@ void loop() {
       } else if (key == 3) {
         /* */
       }
- 
-      currentPiece.display();
+    }
+  }
+  if (counter == levelUp) {
+    counter = 0;
+    if (!currentPiece.moveRight()) {
+      currentPiece.freeze();
+      currentPiece = Piece::newPiece();
     }
   }
 }
