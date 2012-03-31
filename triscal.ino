@@ -1,29 +1,30 @@
 /*
  * Tetris game on a Deuligne 16x2 LCD display
- *
  * https://github.com/dzimboum/triscalino
+ *
+ * Please file issues and send contributions on Github
+ *
  * Copyright 2012 dzimboum
  * Released under the WTFPL 2.0 license
  * http://sam.zoy.org/wtfpl/COPYING
- *
- * This is a work in progress, please be patient!
  */
-
-extern "C" {
-  #include <inttypes.h>
-}
 
 #include <Wire.h>
 #include <Deuligne.h>
 
-Deuligne lcd;
+#include <inttypes.h>
+#include <string.h>
+
+#define DEBUG_TRISCAL 1
+#undef DEBUG_TRISCAL
 
 /*
- * A Tetris game on a 16x2 display is not very fun.
- * In order to make it a little bit funnier, we will
- * split rows into 2, in order to emulate a 16x4
- * display.  This is crazy!
+ * A Tetris game on a 16x2 display is not very funny.
+ * In order to make it a little bit more exciting, we
+ * will split rows into 2, in order to emulate a 16x4
+ * display.  Yeah, this is crazy!
  */
+Deuligne lcd;
 
 // Upper square
 byte upperSquare[] = {
@@ -67,13 +68,26 @@ byte bothSquares[] = {
  * is to use a 4x16 grid.
  * But we will add two virtual rows at the top and bottom,
  * and one virtual column at the right.  Eventually we
- * need an 8x17 array.
+ * will split rows into 2, in order to emulate a 16x4
+ * display.  Yeah, this is crazy!
+ * Board looks like:
+ *
+ * 0               17
+ * #################
+ * #################
+ *              X X#
+ *     +++      XXX#
+ *               XX#
+ *               X #
+ * #################
+ * #################
+ *
+ * where # is a virtual wall, X are frozen pieces,
+ * and + is the moving one.
+ * Both # and X are stored in the board array, and
+ * + is stored in the currentPiece object.
  */
-boolean board[8][17] = {
-};
-
-// Piece number currently processed
-uint8_t currentNumber = -1;
+uint8_t board[8][17];
 
 // Geometric shape
 class Shape
@@ -126,7 +140,6 @@ boolean
 Shape::pixel(int i, int j)
 {
   return grid_[i][j];
-
 }
 
 Shape allPieces[] = {
@@ -146,28 +159,40 @@ Shape allPieces[] = {
      B010,
      B010,
      B011),
+  Shape(
+     B010,
+     B010,
+     B110),
+  Shape(
+     B011,
+     B010,
+     B000),
+  Shape(
+     B111,
+     B010,
+     B000),
 };
 
 class Piece
 {
-private:
 public:
   uint8_t row_;
   uint8_t column_;
   uint8_t number_;
-public:
-  Piece(uint8_t row, uint8_t colonne, uint8_t number);
-  void display(uint8_t oldRow, uint8_t oldColumn);
+
+  Piece(uint8_t row, uint8_t column, uint8_t number);
+  void display(uint8_t oldRow = 0, uint8_t oldColumn = 0);
   boolean moveUp();
   boolean moveDown();
   boolean moveRight();
   void freeze();
+  boolean canEnter();
   static Piece newPiece();
 };
 
-Piece::Piece(uint8_t row, uint8_t colonne, uint8_t number) :
+Piece::Piece(uint8_t row, uint8_t column, uint8_t number) :
     row_(row),
-    column_(colonne),
+    column_(column),
     number_(number)
 {
 }
@@ -175,10 +200,15 @@ Piece::Piece(uint8_t row, uint8_t colonne, uint8_t number) :
 Piece
 Piece::newPiece()
 {
-  ++currentNumber;
-  if (currentNumber >= sizeof(allPieces)/sizeof(Shape))
-    currentNumber = 0;
-  return Piece(3, 0, currentNumber);
+  uint8_t n = random(sizeof(allPieces)/sizeof(Shape));
+#ifdef DEBUG_TRISCAL
+  Serial.print("New piece: ");
+  Serial.print(n);
+  Serial.print(" out of ");
+  Serial.print(sizeof(allPieces)/sizeof(Shape));
+  Serial.println(" pieces");
+#endif
+  return Piece(3, 0, n);
 }
 
 void
@@ -186,20 +216,22 @@ Piece::display(uint8_t oldRow, uint8_t oldColumn)
 {
   if (oldRow == row_ && oldColumn == column_) return;
 
-  for (int j = 0; j < 3; ++j) {
-    for (int i = -1; i < 3; ++i) {
-      if ((oldRow + i) % 2 == 0) {
-          lcd.setCursor(oldColumn+j, (oldRow+i) / 2 - 1);
-          if (board[oldRow + i][oldColumn + j] && board[oldRow + i + 1][oldColumn + j]) {
-            lcd.write(2);
-          } else if (board[oldRow + i][oldColumn + j]) {
-            lcd.write(0);
-          } else if (board[oldRow + i + 1][oldColumn + j]) {
-            lcd.write(1);
-          } else {
-            lcd.print(' ');
-          }
-          ++i;
+  if (oldRow != 0 || oldColumn != 0) {
+    for (int j = 0; j < 3; ++j) {
+      for (int i = -1; i < 3; ++i) {
+        if ((oldRow + i) % 2 == 0) {
+            lcd.setCursor(oldColumn+j, (oldRow+i) / 2 - 1);
+            if (board[oldRow + i][oldColumn + j] && board[oldRow + i + 1][oldColumn + j]) {
+              lcd.write(2);
+            } else if (board[oldRow + i][oldColumn + j]) {
+              lcd.write(0);
+            } else if (board[oldRow + i + 1][oldColumn + j]) {
+              lcd.write(1);
+            } else {
+              lcd.print(' ');
+            }
+            ++i;
+        }
       }
     }
   }
@@ -279,23 +311,147 @@ Piece::freeze()
       }
     }
   }
+}
+
+boolean
+Piece::canEnter()
+{
   for (int j = 0; j < 3; ++j) {
-    boolean complet = true;
-    for (int i = 2; i < 6; ++i) {
-      if (!board[i][column_ + j]) {
-        complet = false;
-        break;
+    for (int i = 0; i < 3; ++i) {
+      if (board[row_ + i][column_ + j] && allPieces[number_].pixel(i, j)) {
+        return false;
       }
     }
-    if (complet) {
-    }
   }
+  return true;
 }
 
 /* Current piece */
 Piece currentPiece = Piece::newPiece();
 
-int levelUp = 10000;
+int levelUp = 0;
+int level = 1;
+int score = 0;
+
+void gameOver() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Score:");
+  lcd.setCursor(0, 1);
+  lcd.print(score);
+  delay(10000);
+  level = 1;
+  score = 0;
+  levelUp = 0;
+}
+
+// For debugging purpose
+#ifdef DEBUG_TRISCAL
+void dumpBoard(const char *msg) {
+  Serial.println(msg);
+  for (int i = 0; i < 8; ++i) {
+    for (int j = 0; j < 17; ++j) {
+      if (i < 2 || i > 5 || j == 16) {
+        if (board[i][j])
+          Serial.print("#");
+        else
+          Serial.print("!");
+      }
+      else if (board[i][j])
+        Serial.print("X");
+      else
+        Serial.print(" ");
+    }
+    Serial.println("");
+  }
+}
+#endif
+
+/*
+ * Redraw the screen based on data found in the board array.
+ */
+void redrawScreen() {
+  for (int i = 0; i < 2; ++i) {
+    lcd.setCursor(0, i);
+    for (int j = 0; j < 17; ++j) {
+      if (board[2*i+2][j] && board[2*i+3][j])
+        lcd.write(2);
+      else if (board[2*i+2][j])
+        lcd.write(0);
+      else if (board[2*i+3][j])
+        lcd.write(1);
+      else
+        lcd.print(" ");
+    }
+  }   
+}
+
+/*
+ * Check for full columns and remove them.
+ * It checks only [column,column+2] columns.
+ */
+void checkFullColumns(uint8_t column) {
+  int fullColumns = 0;
+  static boolean toRemove[3];
+  for (int j = 0; j < 3; ++j) {
+    if (j+column >= 16) {
+      toRemove[j] = false;
+      continue;
+    }
+    toRemove[j] = true;
+    for (int i = 2; i < 6; ++i) {
+      if (!board[i][column+j]) {
+        toRemove[j] = false;
+        break;
+      }
+    }
+    if (toRemove[j]) {
+      ++fullColumns;
+    }
+  }
+  if (fullColumns > 0) {
+#ifdef DEBUG_TRISCAL
+    Serial.print("Finished columns: ");
+    Serial.println(fullColumns);
+    Serial.print("found starting from column ");
+    Serial.println(column);
+#endif
+    for (int b = 0; b < 6; ++b) {
+      for (int j = 0; j < 3; ++j) {
+        if (toRemove[j]) {
+          lcd.setCursor(column+j, 0);
+          if (b % 2)
+            lcd.write(2);
+          else
+            lcd.print(" ");
+          lcd.setCursor(column+j, 1);
+          if (b % 2)
+            lcd.write(2);
+          else
+            lcd.print(" ");
+        }
+        delay(30);
+      }
+    }
+    for (int j = 0; j < 3; ++j) {
+      if (!toRemove[j])
+        continue;
+      for (int i = 2; i < 6; ++i) {
+        memmove(&board[i][1], &board[i][0], column + j);
+        memset(&board[i][0], 0, 1);
+      }
+    }
+#ifdef DEBUG_TRISCAL
+    dumpBoard("");
+    Serial.print("Add to score: ");
+    Serial.println(fullColumns * level);
+#endif
+    redrawScreen();
+  }
+  score += fullColumns * level;
+}
+
+int maxCounter = 10000;
 int counter = 0;
 
 int key=-1;
@@ -303,6 +459,11 @@ int oldkey=-1;
 
 void setup()
 {
+#ifdef DEBUG_TRISCAL
+  Serial.begin(9600);
+  Serial.println("Hello world");
+#endif
+
   Wire.begin();
   lcd.init();
 
@@ -318,8 +479,10 @@ void setup()
   lcd.print("ok");
   delay(300);
   lcd.clear();
+  //randomSeed(analogRead(0));
+  randomSeed(137);
 
-  currentPiece.display(0, 0);
+  currentPiece.display();
 
   for (int j = 0; j < 17; ++j) {
     board[0][j] = true;
@@ -332,7 +495,8 @@ void setup()
   }
 }
 
-void loop() {
+void loop()
+{
   ++counter;
   key = lcd.get_key();  // read the value from the sensor & convert into key press
 
@@ -351,14 +515,38 @@ void loop() {
         currentPiece.moveDown();
       } else if (key == 3) {
         /* */
+      } else if (key == 4) {
+        while(currentPiece.moveRight()) {
+          delay(100);
+        }
       }
     }
   }
-  if (counter == levelUp) {
+  if (counter >= maxCounter) {
+    ++levelUp;
+    if (levelUp >= 10) {
+      levelUp = 0;
+      ++level;
+      maxCounter *= 0.8;
+#ifdef DEBUG_TRISCAL
+      Serial.println("Next level");
+#endif
+    }
     counter = 0;
     if (!currentPiece.moveRight()) {
       currentPiece.freeze();
+#ifdef DEBUG_TRISCAL
+      dumpBoard("Board before removing columns");
+#endif
+      checkFullColumns(currentPiece.column_);
+#ifdef DEBUG_TRISCAL
+      dumpBoard("Board after removing columns");
+#endif
       currentPiece = Piece::newPiece();
+      currentPiece.display();
+      if (!currentPiece.canEnter()) {
+        gameOver();
+      }
     }
   }
 }
