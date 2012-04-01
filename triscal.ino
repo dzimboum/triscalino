@@ -94,7 +94,7 @@ class Shape
 {
 public:
   // Geometric shape, it contains a 3x3 grid
-  boolean grid_[3][3];
+  boolean grid_[4][3][3];
 
   /*
    * In order to speed up processing, we use 3 auxiliary tables:
@@ -106,40 +106,49 @@ public:
    * bottom_ = { 1, 2, 3 }
    * right_  = { 0, 1, 1 }
    */
-  unsigned char top_[3];
-  unsigned char bottom_[3];
-  unsigned char right_[3];
+  unsigned char top_[4][3];
+  unsigned char bottom_[4][3];
+  unsigned char right_[4][3];
 
 public:
   Shape(unsigned int row0, unsigned int row1, unsigned int row2);
-  boolean pixel(int i, int j);
+  boolean pixel(int orientation, int i, int j);
 };
 
 Shape::Shape(unsigned int row0, unsigned int row1, unsigned int row2)
 {
-  grid_[0][0] = (row0 >> 2) & 1; grid_[0][1] = (row0 >> 1) & 1; grid_[0][2] = row0 & 1;
-  grid_[1][0] = (row1 >> 2) & 1; grid_[1][1] = (row1 >> 1) & 1; grid_[1][2] = row1 & 1;
-  grid_[2][0] = (row2 >> 2) & 1; grid_[2][1] = (row2 >> 1) & 1; grid_[2][2] = row2 & 1;
-
-  for (int i = 0; i < 3; ++i) {
-    top_[i] = bottom_[i] = right_[i] = 3;
-  }
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j < 3; ++j) {
-      if (grid_[i][j]) {
-        bottom_[j] = i;
-        right_[i] = j;
+  grid_[0][0][0] = (row0 >> 2) & 1; grid_[0][0][1] = (row0 >> 1) & 1; grid_[0][0][2] = row0 & 1;
+  grid_[0][1][0] = (row1 >> 2) & 1; grid_[0][1][1] = (row1 >> 1) & 1; grid_[0][1][2] = row1 & 1;
+  grid_[0][2][0] = (row2 >> 2) & 1; grid_[0][2][1] = (row2 >> 1) & 1; grid_[0][2][2] = row2 & 1;
+  for (int o = 1; o < 4; ++o) {
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        grid_[o][i][j] = grid_[o-1][2-j][i];
       }
-      if (grid_[2-i][j]) 
-        top_[j] = 2-i;
+    }
+  }
+
+  for (int o = 0; o < 4; ++o) {
+    for (int i = 0; i < 3; ++i) {
+      top_[o][i] = bottom_[o][i] = right_[o][i] = 3;
+    }
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        if (grid_[o][i][j]) {
+          bottom_[o][j] = i;
+          right_[o][i] = j;
+        }
+        if (grid_[o][2-i][j]) 
+          top_[o][j] = 2-i;
+      }
     }
   }
 }
 
 boolean
-Shape::pixel(int i, int j)
+Shape::pixel(int orientation, int i, int j)
 {
-  return grid_[i][j];
+  return grid_[orientation][i][j];
 }
 
 Shape allPieces[] = {
@@ -179,21 +188,26 @@ public:
   uint8_t row_;
   uint8_t column_;
   uint8_t number_;
+  uint8_t orientation_;
 
   Piece(uint8_t row, uint8_t column, uint8_t number);
-  void display(uint8_t oldRow = 0, uint8_t oldColumn = 0);
+  void display(uint8_t oldOrientation = 0, uint8_t oldRow = 0, uint8_t oldColumn = 0);
   boolean moveUp();
   boolean moveDown();
   boolean moveRight();
+  boolean rotateClockwise(boolean force = false);
+  boolean rotateCounterClockwise(boolean force = false);
   void freeze();
-  boolean canEnter();
+  boolean findMatchingPlace();
+  boolean canPlace();
   static Piece newPiece();
 };
 
 Piece::Piece(uint8_t row, uint8_t column, uint8_t number) :
     row_(row),
     column_(column),
-    number_(number)
+    number_(number),
+    orientation_(0)
 {
 }
 
@@ -212,9 +226,9 @@ Piece::newPiece()
 }
 
 void
-Piece::display(uint8_t oldRow, uint8_t oldColumn)
+Piece::display(uint8_t oldOrientation, uint8_t oldRow, uint8_t oldColumn)
 {
-  if (oldRow == row_ && oldColumn == column_) return;
+  if (oldOrientation == orientation_ && oldRow == row_ && oldColumn == column_) return;
 
   if (oldRow != 0 || oldColumn != 0) {
     for (int j = 0; j < 3; ++j) {
@@ -237,7 +251,7 @@ Piece::display(uint8_t oldRow, uint8_t oldColumn)
   }
   for (int j = 0; j < 3; ++j) {
     for (int i = 0; i < 3; ++i) {
-      if (allPieces[number_].pixel(i, j)) {
+      if (allPieces[number_].pixel(orientation_, i, j)) {
         lcd.setCursor(column_+j, (row_+i) / 2 - 1);
         if ((row_ + i) % 2) {
           if (board[row_ + i - 1][column_ + j])
@@ -245,7 +259,7 @@ Piece::display(uint8_t oldRow, uint8_t oldColumn)
           else
             lcd.write(1);
         } else {
-          if (i < 2 && allPieces[number_].pixel(i+1, j)) {
+          if (i < 2 && allPieces[number_].pixel(orientation_, i+1, j)) {
             lcd.write(2);
           } else if (board[row_ + i + 1][column_ + j]) {
             lcd.write(2);
@@ -263,13 +277,13 @@ boolean
 Piece::moveUp()
 {
   --row_;
-  if ((allPieces[number_].top_[0] != 3 && board[row_ + allPieces[number_].top_[0]][column_]) ||
-      (allPieces[number_].top_[1] != 3 && board[row_ + allPieces[number_].top_[1]][column_]) ||
-      (allPieces[number_].top_[2] != 3 && board[row_ + allPieces[number_].top_[2]][column_])) {
+  if ((allPieces[number_].top_[orientation_][0] != 3 && board[row_ + allPieces[number_].top_[orientation_][0]][column_]) ||
+      (allPieces[number_].top_[orientation_][1] != 3 && board[row_ + allPieces[number_].top_[orientation_][1]][column_]) ||
+      (allPieces[number_].top_[orientation_][2] != 3 && board[row_ + allPieces[number_].top_[orientation_][2]][column_])) {
     ++row_;
     return false;
   }
-  display(row_ + 1, column_);
+  display(orientation_, row_ + 1, column_);
   return true;
 }
 
@@ -277,13 +291,13 @@ boolean
 Piece::moveDown()
 {
   ++row_;
-  if ((allPieces[number_].bottom_[0] != 3 && board[row_ + allPieces[number_].bottom_[0]][column_]) ||
-      (allPieces[number_].bottom_[1] != 3 && board[row_ + allPieces[number_].bottom_[1]][column_]) ||
-      (allPieces[number_].bottom_[2] != 3 && board[row_ + allPieces[number_].bottom_[2]][column_])) {
+  if ((allPieces[number_].bottom_[orientation_][0] != 3 && board[row_ + allPieces[number_].bottom_[orientation_][0]][column_]) ||
+      (allPieces[number_].bottom_[orientation_][1] != 3 && board[row_ + allPieces[number_].bottom_[orientation_][1]][column_]) ||
+      (allPieces[number_].bottom_[orientation_][2] != 3 && board[row_ + allPieces[number_].bottom_[orientation_][2]][column_])) {
     --row_;
     return false;
   }
-  display(row_ - 1, column_);
+  display(orientation_, row_ - 1, column_);
   return true;
 }
 
@@ -291,13 +305,73 @@ boolean
 Piece::moveRight()
 {
   ++column_;
-  if ((allPieces[number_].right_[0] != 3 && board[row_  ][column_ + allPieces[number_].right_[0]]) ||
-      (allPieces[number_].right_[1] != 3 && board[row_+1][column_ + allPieces[number_].right_[1]]) ||
-      (allPieces[number_].right_[2] != 3 && board[row_+2][column_ + allPieces[number_].right_[2]])) {
+  if ((allPieces[number_].right_[orientation_][0] != 3 && board[row_  ][column_ + allPieces[number_].right_[orientation_][0]]) ||
+      (allPieces[number_].right_[orientation_][1] != 3 && board[row_+1][column_ + allPieces[number_].right_[orientation_][1]]) ||
+      (allPieces[number_].right_[orientation_][2] != 3 && board[row_+2][column_ + allPieces[number_].right_[orientation_][2]])) {
     --column_;
     return false;
   }
-  display(row_, column_ - 1);
+  display(orientation_, row_, column_ - 1);
+  return true;
+}
+
+boolean
+Piece::findMatchingPlace()
+{
+  int oldRow = row_;
+  for (int delta = 1; delta < 3; ++delta) {
+    row_ = oldRow + delta;
+    if (row_ < 6) {
+      if (canPlace()) {
+        return true;
+      }
+    }
+    if (oldRow >= delta) {
+      row_ = oldRow - delta;
+      if (canPlace()) {
+        return true;
+      }
+    }
+  }
+  row_ = oldRow;
+  return false;
+}
+
+boolean
+Piece::rotateClockwise(boolean force)
+{
+  uint8_t oldOrientation = orientation_;
+  ++orientation_;
+  orientation_ = (orientation_ & 3);
+  if (force)
+    return true;
+  
+  if (!canPlace()) {
+    if (!findMatchingPlace()) {
+      orientation_ = oldOrientation;
+      return false;
+    }
+  }
+  display(oldOrientation, row_, column_);
+  return true;
+}
+
+boolean
+Piece::rotateCounterClockwise(boolean force)
+{
+  uint8_t oldOrientation = orientation_;
+  --orientation_;
+  orientation_ = (orientation_ & 3);
+  if (force)
+    return true;
+
+  if (!canPlace()) {
+    if (!findMatchingPlace()) {
+      orientation_ = oldOrientation;
+      return false;
+    }
+  }
+  display(oldOrientation, row_, column_);
   return true;
 }
 
@@ -306,7 +380,7 @@ Piece::freeze()
 {
   for (int i = 0; i < 3; ++i) {
     for (int j = 0; j < 3; ++j) {
-      if (allPieces[number_].pixel(i, j)) {
+      if (allPieces[number_].pixel(orientation_, i, j)) {
         board[row_ + i][column_ + j] = true;
       }
     }
@@ -314,11 +388,11 @@ Piece::freeze()
 }
 
 boolean
-Piece::canEnter()
+Piece::canPlace()
 {
   for (int j = 0; j < 3; ++j) {
     for (int i = 0; i < 3; ++i) {
-      if (board[row_ + i][column_ + j] && allPieces[number_].pixel(i, j)) {
+      if (board[row_ + i][column_ + j] && allPieces[number_].pixel(orientation_, i, j)) {
         return false;
       }
     }
@@ -508,13 +582,13 @@ void loop()
     {
       oldkey = key;
       if (key == 0) {
-        currentPiece.moveRight();
+        currentPiece.rotateClockwise();
       } else if (key == 1) {
         currentPiece.moveUp();
       } else if (key == 2) {
         currentPiece.moveDown();
       } else if (key == 3) {
-        /* */
+        currentPiece.rotateCounterClockwise();
       } else if (key == 4) {
         while(currentPiece.moveRight()) {
           delay(100);
@@ -544,7 +618,7 @@ void loop()
 #endif
       currentPiece = Piece::newPiece();
       currentPiece.display();
-      if (!currentPiece.canEnter()) {
+      if (!currentPiece.canPlace()) {
         gameOver();
       }
     }
