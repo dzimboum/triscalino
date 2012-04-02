@@ -96,20 +96,6 @@ public:
   // Geometric shape, it contains a 3x3 grid
   boolean grid_[4][3][3];
 
-  /*
-   * In order to speed up processing, we use 3 auxiliary tables:
-   * top_, bottom and right_.  For instance with this shape:
-   *   xoo
-   *   xxo
-   *   oxo
-   * top_    = { 0, 1, 3 }
-   * bottom_ = { 1, 2, 3 }
-   * right_  = { 0, 1, 1 }
-   */
-  unsigned char top_[4][3];
-  unsigned char bottom_[4][3];
-  unsigned char right_[4][3];
-
 public:
   Shape(unsigned int row0, unsigned int row1, unsigned int row2);
   boolean pixel(int orientation, int i, int j);
@@ -124,22 +110,6 @@ Shape::Shape(unsigned int row0, unsigned int row1, unsigned int row2)
     for (int i = 0; i < 3; ++i) {
       for (int j = 0; j < 3; ++j) {
         grid_[o][i][j] = grid_[o-1][2-j][i];
-      }
-    }
-  }
-
-  for (int o = 0; o < 4; ++o) {
-    for (int i = 0; i < 3; ++i) {
-      top_[o][i] = bottom_[o][i] = right_[o][i] = 3;
-    }
-    for (int i = 0; i < 3; ++i) {
-      for (int j = 0; j < 3; ++j) {
-        if (grid_[o][i][j]) {
-          bottom_[o][j] = i;
-          right_[o][i] = j;
-        }
-        if (grid_[o][2-i][j]) 
-          top_[o][j] = 2-i;
       }
     }
   }
@@ -199,7 +169,7 @@ public:
   boolean rotateCounterClockwise(boolean force = false);
   void freeze();
   boolean findMatchingPlace();
-  boolean canPlace();
+  boolean hasRoom();
   static Piece newPiece();
 };
 
@@ -277,9 +247,7 @@ boolean
 Piece::moveUp()
 {
   --row_;
-  if ((allPieces[number_].top_[orientation_][0] != 3 && board[row_ + allPieces[number_].top_[orientation_][0]][column_]) ||
-      (allPieces[number_].top_[orientation_][1] != 3 && board[row_ + allPieces[number_].top_[orientation_][1]][column_]) ||
-      (allPieces[number_].top_[orientation_][2] != 3 && board[row_ + allPieces[number_].top_[orientation_][2]][column_])) {
+  if (!hasRoom()) {
     ++row_;
     return false;
   }
@@ -291,9 +259,7 @@ boolean
 Piece::moveDown()
 {
   ++row_;
-  if ((allPieces[number_].bottom_[orientation_][0] != 3 && board[row_ + allPieces[number_].bottom_[orientation_][0]][column_]) ||
-      (allPieces[number_].bottom_[orientation_][1] != 3 && board[row_ + allPieces[number_].bottom_[orientation_][1]][column_]) ||
-      (allPieces[number_].bottom_[orientation_][2] != 3 && board[row_ + allPieces[number_].bottom_[orientation_][2]][column_])) {
+  if (!hasRoom()) {
     --row_;
     return false;
   }
@@ -305,9 +271,7 @@ boolean
 Piece::moveRight()
 {
   ++column_;
-  if ((allPieces[number_].right_[orientation_][0] != 3 && board[row_  ][column_ + allPieces[number_].right_[orientation_][0]]) ||
-      (allPieces[number_].right_[orientation_][1] != 3 && board[row_+1][column_ + allPieces[number_].right_[orientation_][1]]) ||
-      (allPieces[number_].right_[orientation_][2] != 3 && board[row_+2][column_ + allPieces[number_].right_[orientation_][2]])) {
+  if (!hasRoom()) {
     --column_;
     return false;
   }
@@ -322,13 +286,13 @@ Piece::findMatchingPlace()
   for (int delta = 1; delta < 3; ++delta) {
     row_ = oldRow + delta;
     if (row_ < 6) {
-      if (canPlace()) {
+      if (hasRoom()) {
         return true;
       }
     }
     if (oldRow >= delta) {
       row_ = oldRow - delta;
-      if (canPlace()) {
+      if (hasRoom()) {
         return true;
       }
     }
@@ -346,7 +310,7 @@ Piece::rotateClockwise(boolean force)
   if (force)
     return true;
   
-  if (!canPlace()) {
+  if (!hasRoom()) {
     if (!findMatchingPlace()) {
       orientation_ = oldOrientation;
       return false;
@@ -365,7 +329,7 @@ Piece::rotateCounterClockwise(boolean force)
   if (force)
     return true;
 
-  if (!canPlace()) {
+  if (!hasRoom()) {
     if (!findMatchingPlace()) {
       orientation_ = oldOrientation;
       return false;
@@ -388,7 +352,7 @@ Piece::freeze()
 }
 
 boolean
-Piece::canPlace()
+Piece::hasRoom()
 {
   for (int j = 0; j < 3; ++j) {
     for (int i = 0; i < 3; ++i) {
@@ -618,7 +582,7 @@ void loop()
 #endif
       currentPiece = Piece::newPiece();
       currentPiece.display();
-      if (!currentPiece.canPlace()) {
+      if (!currentPiece.hasRoom()) {
         gameOver();
       }
     }
