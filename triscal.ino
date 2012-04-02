@@ -27,7 +27,7 @@
 Deuligne lcd;
 
 // Upper square
-byte upperSquare[] = {
+byte upperHalfRow[] = {
   B11111,
   B11111,
   B11111,
@@ -39,7 +39,7 @@ byte upperSquare[] = {
 };
 
 // Lower square
-byte lowerSquare[] = {
+byte lowerHalfRow[] = {
   B0,
   B0,
   B0,
@@ -51,7 +51,7 @@ byte lowerSquare[] = {
 };
 
 // Upper and lower squares
-byte bothSquares[] = {
+byte fullRow[] = {
   B11111,
   B11111,
   B11111,
@@ -72,15 +72,15 @@ byte bothSquares[] = {
  * display.  Yeah, this is crazy!
  * Board looks like:
  *
- * 0               17
- * #################
- * #################
- *              X X#
- *     +++      XXX#
- *               XX#
- *               X #
- * #################
- * #################
+ *   0               16
+ * 0 #################
+ * 1 #################
+ * 2              X X#
+ * 3     +++      XXX#
+ * 4               XX#
+ * 5               X #
+ * 6 #################
+ * 7 #################
  *
  * where # is a virtual wall, X are frozen pieces,
  * and + is the moving one.
@@ -93,12 +93,15 @@ uint8_t board[8][17];
 class Shape
 {
 public:
-  // Geometric shape, it contains a 3x3 grid
+  // Local shape, it contains a 3x3 grid, and there are 4 orientations
   boolean grid_[4][3][3];
 
 public:
   Shape(unsigned int row0, unsigned int row1, unsigned int row2);
   boolean pixel(int orientation, int i, int j);
+#ifdef DEBUG_TRISCAL
+  void print();
+#endif
 };
 
 Shape::Shape(unsigned int row0, unsigned int row1, unsigned int row2)
@@ -106,10 +109,57 @@ Shape::Shape(unsigned int row0, unsigned int row1, unsigned int row2)
   grid_[0][0][0] = (row0 >> 2) & 1; grid_[0][0][1] = (row0 >> 1) & 1; grid_[0][0][2] = row0 & 1;
   grid_[0][1][0] = (row1 >> 2) & 1; grid_[0][1][1] = (row1 >> 1) & 1; grid_[0][1][2] = row1 & 1;
   grid_[0][2][0] = (row2 >> 2) & 1; grid_[0][2][1] = (row2 >> 1) & 1; grid_[0][2][2] = row2 & 1;
+  // Build grid_ for other orientations
   for (int o = 1; o < 4; ++o) {
     for (int i = 0; i < 3; ++i) {
       for (int j = 0; j < 3; ++j) {
         grid_[o][i][j] = grid_[o-1][2-j][i];
+      }
+    }
+  }
+  // In order to avoid some visual discrepancies, we modify grid_ array.
+  // For instance, user assumes that the 2x2 square is invariant by rotation.
+  //
+  // Shift piece to the left in order to prevent pieces from
+  // moving to the left when rotating.  There may be one or two
+  // empty columns, so these instructions have to be run twice
+  for (int o = 0; o < 4; /* */) {
+    if (!grid_[o][0][0] && !grid_[o][1][0] && !grid_[o][2][0]) {
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 2; ++j) {
+          grid_[o][i][j] = grid_[o][i][j+1];
+        }
+        grid_[o][i][2] = false;
+      }
+    } else {
+      ++o;
+    }
+  }
+  // Shift piece to the bottom
+  for (int o = 0; o < 4; ++o) {
+    if (!grid_[o][2][0] && !grid_[o][2][1] && !grid_[o][2][2]) {
+      for (int i = 2; i > 0; --i) {
+        for (int j = 0; j < 3; ++j) {
+          grid_[o][i][j] = grid_[o][i-1][j];
+        }
+      }
+      for (int j = 0; j < 3; ++j) {
+        grid_[o][0][j] = false;
+      }
+    }
+  }
+  // Shift piece to the top, unless this is a middle line
+  for (int o = 0; o < 4; ++o) {
+    if (!grid_[o][0][0] && !grid_[o][0][1] && !grid_[o][0][2]) {
+      if (grid_[o][2][0] || grid_[o][2][1] || grid_[o][2][2]) {
+        for (int i = 0; i < 2; ++i) {
+          for (int j = 0; j < 3; ++j) {
+            grid_[o][i][j] = grid_[o][i+1][j];
+          }
+        }
+        for (int j = 0; j < 3; ++j) {
+          grid_[o][2][j] = false;
+        }
       }
     }
   }
@@ -120,6 +170,30 @@ Shape::pixel(int orientation, int i, int j)
 {
   return grid_[orientation][i][j];
 }
+
+#ifdef DEBUG_TRISCAL
+void
+Shape::print()
+{
+  Serial.println();
+  Serial.println(" 0: ##### 1: ##### 2: ##### 3: #####");
+  for (int i = 0; i < 3; ++i) {
+    for (int orientation = 0; orientation < 4; ++orientation) {
+      Serial.print("    #");
+      for (int j = 0; j < 3; ++j) {
+        if (pixel(orientation, i, j)) {
+          Serial.print("X");
+        } else {
+          Serial.print(" ");
+        }
+      }
+      Serial.print("#");
+    }
+    Serial.println();
+  }
+  Serial.println("    #####    #####    #####    #####");
+}
+#endif
 
 Shape allPieces[] = {
   Shape(
@@ -203,7 +277,7 @@ Piece::display(uint8_t oldOrientation, uint8_t oldRow, uint8_t oldColumn)
   if (oldRow != 0 || oldColumn != 0) {
     for (int j = 0; j < 3; ++j) {
       for (int i = -1; i < 3; ++i) {
-        if ((oldRow + i) % 2 == 0) {
+        if ((oldRow + i > 0) && ((oldRow + i) % 2 == 0)) {
             lcd.setCursor(oldColumn+j, (oldRow+i) / 2 - 1);
             if (board[oldRow + i][oldColumn + j] && board[oldRow + i + 1][oldColumn + j]) {
               lcd.write(2);
@@ -309,7 +383,7 @@ Piece::rotateClockwise(boolean force)
   orientation_ = (orientation_ & 3);
   if (force)
     return true;
-  
+
   if (!hasRoom()) {
     if (!findMatchingPlace()) {
       orientation_ = oldOrientation;
@@ -421,7 +495,7 @@ void redrawScreen() {
       else
         lcd.print(" ");
     }
-  }   
+  }
 }
 
 /*
@@ -482,11 +556,11 @@ void checkFullColumns(uint8_t column) {
 #ifdef DEBUG_TRISCAL
     dumpBoard("");
     Serial.print("Add to score: ");
-    Serial.println(fullColumns * level);
+    Serial.println(fullColumns * (40 - column) * level);
 #endif
     redrawScreen();
   }
-  score += fullColumns * level;
+  score += fullColumns * (40 - column) * level;
 }
 
 int maxCounter = 10000;
@@ -500,14 +574,17 @@ void setup()
 #ifdef DEBUG_TRISCAL
   Serial.begin(9600);
   Serial.println("Hello world");
+  for (int i = 0; i < sizeof(allPieces)/sizeof(Shape); ++i) {
+    allPieces[i].print();
+  }
 #endif
 
   Wire.begin();
   lcd.init();
 
-  lcd.createChar(0, upperSquare);
-  lcd.createChar(1, lowerSquare);
-  lcd.createChar(2, bothSquares);
+  lcd.createChar(0, upperHalfRow);
+  lcd.createChar(1, lowerHalfRow);
+  lcd.createChar(2, fullRow);
 
   lcd.backLight(true); // Backlight ON
 
@@ -517,8 +594,7 @@ void setup()
   lcd.print("ok");
   delay(300);
   lcd.clear();
-  //randomSeed(analogRead(0));
-  randomSeed(137);
+  randomSeed(analogRead(1));
 
   currentPiece.display();
 
@@ -542,7 +618,7 @@ void loop()
   {
     delay(50);          // wait for debounce time
     key = lcd.get_key();// read the value from the sensor & convert into key press
-    if (key != oldkey)				
+    if (key != oldkey)
     {
       oldkey = key;
       if (key == 0) {
