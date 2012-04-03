@@ -1,8 +1,9 @@
 /*
- * Tetris game on a Deuligne 16x2 LCD display
+ * Tetris game on a 16x2 LCD display
  * https://github.com/dzimboum/triscalino
+ * Implemented on the great Deuligne shield, by Snootlab.
  *
- * Please file issues and send contributions on Github
+ * Please file issues and send contributions on Github.
  *
  * Copyright 2012 dzimboum
  * Released under the WTFPL 2.0 license
@@ -71,8 +72,8 @@ byte fullRow[] = {
  * will split rows into 2, in order to emulate a 16x4
  * display.  Yeah, this is crazy!
  * Board looks like:
- *
- *   0               16
+ *             1111111
+ *   01234567890123456
  * 0 #################
  * 1 #################
  * 2              X X#
@@ -87,7 +88,11 @@ byte fullRow[] = {
  * Both # and X are stored in the board array, and
  * + is stored in the currentPiece object.
  */
-uint8_t board[8][17];
+
+// Global variables
+boolean board[8][17];
+int score;
+int level;
 
 // Geometric shape
 class Shape
@@ -97,14 +102,14 @@ public:
   boolean grid_[4][3][3];
 
 public:
-  Shape(unsigned int row0, unsigned int row1, unsigned int row2);
+  Shape(byte row0, byte row1, byte row2);
   boolean pixel(int orientation, int i, int j);
 #ifdef DEBUG_TRISCAL
   void print();
 #endif
 };
 
-Shape::Shape(unsigned int row0, unsigned int row1, unsigned int row2)
+Shape::Shape(byte row0, byte row1, byte row2)
 {
   grid_[0][0][0] = (row0 >> 2) & 1; grid_[0][0][1] = (row0 >> 1) & 1; grid_[0][0][2] = row0 & 1;
   grid_[0][1][0] = (row1 >> 2) & 1; grid_[0][1][1] = (row1 >> 1) & 1; grid_[0][1][2] = row1 & 1;
@@ -200,10 +205,6 @@ Shape allPieces[] = {
      B111,
      B000,
      B000),
-  Shape(
-     B010,
-     B111,
-     B010),
   Shape(
      B110,
      B110,
@@ -438,25 +439,6 @@ Piece::hasRoom()
   return true;
 }
 
-/* Current piece */
-Piece currentPiece = Piece::newPiece();
-
-int levelUp = 0;
-int level = 1;
-int score = 0;
-
-void gameOver() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Score:");
-  lcd.setCursor(0, 1);
-  lcd.print(score);
-  delay(10000);
-  level = 1;
-  score = 0;
-  levelUp = 0;
-}
-
 // For debugging purpose
 #ifdef DEBUG_TRISCAL
 void dumpBoard(const char *msg) {
@@ -549,8 +531,10 @@ void checkFullColumns(uint8_t column) {
       if (!toRemove[j])
         continue;
       for (int i = 2; i < 6; ++i) {
-        memmove(&board[i][1], &board[i][0], column + j);
-        memset(&board[i][0], 0, 1);
+        for (int b = column + j; b > 0; --b) {
+          board[i][b] = board[i][b-1];
+        }
+        board[i][0] = false;
       }
     }
 #ifdef DEBUG_TRISCAL
@@ -563,11 +547,54 @@ void checkFullColumns(uint8_t column) {
   score += fullColumns * (40 - column) * level;
 }
 
-int maxCounter = 10000;
-int counter = 0;
+/* Current piece */
+Piece currentPiece = Piece::newPiece();
 
-int key=-1;
-int oldkey=-1;
+int levelUp;
+int counter, maxCounter;
+int key, oldkey;
+
+void gameInit()
+{
+  lcd.clear();
+
+  maxCounter = 10000;
+  counter = 0;
+
+  levelUp = 0;
+  level = 1;
+  score = 0;
+
+  key=-1;
+  oldkey=-1;
+
+  for (int i = 0; i < 8; ++i) {
+    for (int j = 0; j < 17; ++j) {
+      board[i][j] = false;
+    }
+  }
+  for (int j = 0; j < 17; ++j) {
+    board[0][j] = true;
+    board[1][j] = true;
+    board[6][j] = true;
+    board[7][j] = true;
+  }
+  for (int i = 0; i < 8; ++i) {
+    board[i][16] = true;
+  }
+
+  currentPiece = Piece::newPiece();
+  currentPiece.display();
+}
+
+void gameOver() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Score:");
+  lcd.setCursor(0, 1);
+  lcd.print(score);
+  delay(10000);
+}
 
 void setup()
 {
@@ -592,21 +619,15 @@ void setup()
   lcd.print("Setup");
   lcd.setCursor(7,1); // Place cursor row 8, 2nd line (counting from 0)
   lcd.print("ok");
-  delay(300);
-  lcd.clear();
-  randomSeed(analogRead(1));
 
-  currentPiece.display();
+  int seed = analogRead(1);
+#ifdef DEBUG_TRISCAL
+  Serial.print("random seed: ");
+  Serial.println(seed);
+#endif
+  randomSeed(seed);
 
-  for (int j = 0; j < 17; ++j) {
-    board[0][j] = true;
-    board[1][j] = true;
-    board[6][j] = true;
-    board[7][j] = true;
-  }
-  for (int i = 0; i < 8; ++i) {
-    board[i][16] = true;
-  }
+  gameInit();
 }
 
 void loop()
@@ -642,8 +663,11 @@ void loop()
       levelUp = 0;
       ++level;
       maxCounter *= 0.8;
+      if (maxCounter < 40) {
+        maxCounter = 40;
+      }
 #ifdef DEBUG_TRISCAL
-      Serial.println("Next level");
+      Serial.println("Level up");
 #endif
     }
     counter = 0;
@@ -660,6 +684,7 @@ void loop()
       currentPiece.display();
       if (!currentPiece.hasRoom()) {
         gameOver();
+        gameInit();
       }
     }
   }
