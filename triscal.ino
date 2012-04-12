@@ -12,6 +12,8 @@
 
 #include <Wire.h>
 #include <Deuligne.h>
+#include <EEPROM.h>
+#include <DeuligneHiScores.h>
 
 #include <inttypes.h>
 #include <string.h>
@@ -26,6 +28,7 @@
  * display.  Yeah, this is crazy!
  */
 Deuligne lcd;
+DeuligneHiScores hiScores(lcd);
 
 // Upper square
 byte upperHalfRow[] = {
@@ -593,7 +596,10 @@ void gameOver() {
   lcd.print("Score:");
   lcd.setCursor(0, 1);
   lcd.print(score);
-  delay(10000);
+  if (!hiScores.insert(score)) {
+    delay(10000);
+  }
+  hiScores.display();
 }
 
 void setup()
@@ -615,10 +621,13 @@ void setup()
 
   lcd.backLight(true); // Backlight ON
 
+  hiScores.begin(10, 100, 0x1020);
+
   lcd.setCursor(5,0); // Place cursor row 6, 1st line (counting from 0)
   lcd.print("Setup");
   lcd.setCursor(7,1); // Place cursor row 8, 2nd line (counting from 0)
   lcd.print("ok");
+  delay(800);
 
   int seed = analogRead(1);
 #ifdef DEBUG_TRISCAL
