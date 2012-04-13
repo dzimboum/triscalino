@@ -559,6 +559,7 @@ int key, oldkey;
 
 void gameInit()
 {
+  hiScores.display();
   lcd.clear();
 
   maxCounter = 10000;
@@ -596,10 +597,10 @@ void gameOver() {
   lcd.print("Score:");
   lcd.setCursor(0, 1);
   lcd.print(score);
+  delay(1000);
   if (!hiScores.insert(score)) {
     delay(10000);
   }
-  hiScores.display();
 }
 
 void setup()
